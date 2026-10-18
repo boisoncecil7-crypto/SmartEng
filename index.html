@@ -1,0 +1,154 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="color-scheme" content="light dark"><title>SmartClass Alarm</title><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Ctext y='8' font-size='8'%3E%E2%8F%B0%3C/text%3E%3C/svg%3E">
+<style>
+:root{--bg:#f4f7fc;--card:#fff;--tx:#10213f;--mu:#5b6b88;--pr:#1d4ed8;--on:#fff;--ac:#facc15;--bd:#dbe3f0;--bad:#b91c1c;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0b1220;--card:#131d33;--tx:#e8eefc;--mu:#93a3c4;--pr:#6c97ff;--on:#0b1220;--bd:#25324f;--bad:#f87171}}
+:root[data-theme=dark]{--bg:#0b1220;--card:#131d33;--tx:#e8eefc;--mu:#93a3c4;--pr:#6c97ff;--on:#0b1220;--bd:#25324f;--bad:#f87171}
+*{box-sizing:border-box}html,body{margin:0}body{background:var(--bg);color:var(--tx);font:15px/1.45 system-ui,sans-serif;padding-bottom:70px}
+main{max-width:760px;margin:auto;padding:14px}h1{font-size:22px;margin:4px 0 12px}h2{font-size:16px;margin:0 0 8px}
+.c{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:14px;margin-bottom:12px;box-shadow:0 1px 4px #0001}
+.mu{color:var(--mu);font-size:13px}.big{font-size:30px;font-weight:700;color:var(--pr)}
+button,input,select{font:inherit;border-radius:10px;border:1px solid var(--bd);padding:8px 10px;background:var(--card);color:var(--tx)}
+button{cursor:pointer}button.p{background:var(--pr);color:var(--on);border:0}button.y{background:var(--ac);color:#10213f;border:0}button.d{color:var(--bad)}
+.g{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}.row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--bd)}.row:first-of-type{border-top:0}
+nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);border-top:1px solid var(--bd);padding-bottom:env(safe-area-inset-bottom,0px)}nav button{flex:1;border:0;border-radius:0;padding:12px 2px;font-size:12px}nav .on{color:var(--pr);font-weight:700;box-shadow:inset 0 3px var(--ac)}
+.tag{font-size:11px;background:var(--ac);color:#10213f;border-radius:6px;padding:1px 6px}
+#ring{position:fixed;inset:0;background:var(--pr);color:var(--on);display:none;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center;z-index:9;padding:20px}
+#ring.s{display:flex}#ring .bell{font-size:70px;animation:sh .5s infinite}@keyframes sh{0%,100%{transform:rotate(-15deg)}50%{transform:rotate(15deg)}}
+#ring button{font-size:20px;padding:14px 34px}label{display:block;font-size:12px;color:var(--mu)}
+</style></head><body><main id="app"></main><nav id="nav"></nav>
+<div id="ring" role="alertdialog" aria-live="assertive"><div class="bell">⏰</div><h1 id="rt" style="font-size:28px"></h1><div id="rv"></div><div id="rs"></div><div id="rn" style="font-size:36px;font-weight:700"></div><div id="rm"></div><div><button class="y" onclick="stopR()">STOP</button> <button onclick="snoozeR()">SNOOZE</button></div></div>
+<script>
+const $=s=>document.querySelector(s),D=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const ld=(k,d)=>{try{const v=JSON.parse(localStorage.getItem(k));return v??d}catch(e){return d}},sv=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}};
+const S={classes:ld('c',[]),study:ld('s',[]),fired:ld('f',{}),snz:ld('z',[]),set:Object.assign({lead:10,snooze:5,sleepS:'22:00',sleepE:'07:00',sess:50,brk:10,perDay:3,subj:'',theme:'',defSound:''},ld('set',{}))};
+const save=()=>{sv('c',S.classes);sv('s',S.study);sv('f',S.fired);sv('z',S.snz);sv('set',S.set)};
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const tm=s=>{const[a,b]=s.split(':');return +a*60+ +b},hm=m=>String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');
+const ymd=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+const at=(d,t)=>new Date(d.getFullYear(),d.getMonth(),d.getDate(),+t.slice(0,2),+t.slice(3,5));
+const uid=()=>Math.random().toString(36).slice(2,10);
+let tab='today',ringing=null,aud=null,ctx=null,beepT=null,editing=null,sounds=[];
+// ---- IndexedDB for custom sounds ----
+const db=()=>new Promise((ok,no)=>{const r=indexedDB.open('sc',1);r.onupgradeneeded=()=>r.result.createObjectStore('s',{keyPath:'id'});r.onsuccess=()=>ok(r.result);r.onerror=()=>no(r.error)});
+async function snd(op,v){try{const d=await db();return await new Promise((ok,no)=>{const st=d.transaction('s',op=='get'?'readonly':'readwrite').objectStore('s');const q=op=='all'?st.getAll():op=='put'?st.put(v):op=='del'?st.delete(v):st.get(v);q.onsuccess=()=>ok(q.result);q.onerror=()=>no(q.error)})}catch(e){return op=='all'?[]:null}}
+async function loadSounds(){sounds=await snd('all');r()}
+// ---- alarm engine ----
+function occ(){const o=[],n=new Date();for(let i=-1;i<8;i++){const d=new Date(n.getFullYear(),n.getMonth(),n.getDate()+i),ds=ymd(d);
+S.classes.filter(c=>c.day==d.getDay()&&c.on!==false).forEach(c=>{const st=at(d,c.start);o.push({key:c.id+ds,t:c.code+' '+c.name,v:c.venue,st:+st,fire:+st-c.lead*6e4,snd:c.sound||S.set.defSound})});
+S.study.filter(s=>s.status=='accepted'&&s.date==ds).forEach(s=>{const st=at(d,s.start);o.push({key:s.id,t:'Study: '+s.subject,v:'',st:+st,fire:+st-S.set.lead*6e4,snd:s.sound||S.set.studySound||S.set.defSound})})}return o}
+function tick(){if(ringing)return;const n=Date.now();
+const z=S.snz.find(x=>x.fire<=n);if(z){S.snz=S.snz.filter(x=>x!==z);save();return ring(z.ev)}
+for(const e of occ()){if(S.fired[e.key]||e.fire>n)continue;if(n>e.st+6e5){S.fired[e.key]='missed';save();continue}S.fired[e.key]='rang';save();return ring(e)}
+const c=$('#cd');if(c){const x=nextC();c.textContent=x?cdTxt(x.st-n):'—'}}
+function cdTxt(ms){const s=Math.max(0,Math.floor(ms/1e3)),h=Math.floor(s/3600),m=Math.floor(s%3600/60);return(h?h+'h ':'')+m+'m '+String(s%60).padStart(2,'0')+'s'}
+function nextC(){return occ().filter(e=>e.st>Date.now()&&e.key.length>8&&!e.t.startsWith('Study')).sort((a,b)=>a.st-b.st)[0]}
+function unlock(){try{ctx=ctx||new(window.AudioContext||window.webkitAudioContext)();ctx.resume()}catch(e){}}
+function beep(){unlock();if(!ctx)return;const go=()=>{const o=ctx.createOscillator(),g=ctx.createGain();o.frequency.value=880;g.gain.value=.3;o.connect(g);g.connect(ctx.destination);o.start();o.stop(ctx.currentTime+.3)};go();beepT=setInterval(go,700)}
+async function ring(e){ringing=e;$('#rt').textContent=e.t;$('#rv').textContent=e.v?'Venue: '+e.v:'';$('#rs').textContent='Starts '+new Date(e.st).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});$('#rm').textContent='';$('#ring').classList.add('s');
+ringing.iv=setInterval(()=>{$('#rn').textContent=new Date().toLocaleTimeString();const d=e.st-Date.now();$('#rs').textContent=d>0?'Starts in '+cdTxt(d):'Started '+cdTxt(-d)+' ago'},500);
+if(navigator.vibrate)navigator.vibrate([500,300,500,300,500]);
+const rec=e.snd&&await snd('get',e.snd);if(rec){try{aud=new Audio(URL.createObjectURL(rec.blob));aud.loop=true;await aud.play();return}catch(x){$('#rm').textContent='Custom sound blocked or unplayable — using built-in tone. (Tap "Enable alarms" once per visit.)'}}else if(e.snd)$('#rm').textContent='Custom sound missing — using built-in tone.';beep()}
+function quiet(){if(!ringing)return;clearInterval(ringing.iv);clearInterval(beepT);if(aud){aud.pause();URL.revokeObjectURL(aud.src);aud=null}if(navigator.vibrate)navigator.vibrate(0);$('#ring').classList.remove('s')}
+function stopR(){quiet();ringing=null}
+function snoozeR(){const e=ringing;quiet();ringing=null;if(e.key!='test'){S.snz=S.snz.filter(z=>z.ev.key!=e.key);S.snz.push({fire:Date.now()+S.set.snooze*6e4,ev:{key:e.key,t:e.t,v:e.v,st:e.st,snd:e.snd}});save()}else setTimeout(()=>ring(e),S.set.snooze*6e4)}
+function testAlarm(id){unlock();ring({key:'test',t:'TEST ALARM',v:'Demo room',st:Date.now()+6e4,snd:id??S.set.defSound})}
+async function arm(){unlock();if('Notification'in window)try{await Notification.requestPermission()}catch(e){}r()}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)tick()});setInterval(tick,1000);
+// ---- timetable ----
+const clash=(c)=>S.classes.find(x=>x.id!=c.id&&x.day==c.day&&tm(c.start)<tm(x.end)&&tm(x.start)<tm(c.end));
+function saveClass(){const g=i=>$('#'+i).value.trim(),c={id:editing||uid(),code:g('fc'),name:g('fn'),day:+g('fd'),start:g('fs'),end:g('fe'),venue:g('fv'),lec:g('fl'),lead:+g('fr')||S.set.lead,sound:g('fx'),on:true};
+if(!c.code||!c.start||!c.end)return alert('Course code, start and end are required.');if(tm(c.end)<=tm(c.start))return alert('End time must be after start time.');
+const k=clash(c);if(k&&!confirm('Conflicts with '+k.code+' ('+k.start+'–'+k.end+'). Save anyway?'))return;
+S.classes=S.classes.filter(x=>x.id!=c.id).concat(c);Object.keys(S.fired).forEach(x=>{if(x.startsWith(c.id))delete S.fired[x]});editing=null;save();r()}
+const delC=id=>{S.classes=S.classes.filter(c=>c.id!=id);save();r()},dupC=id=>{const c=S.classes.find(x=>x.id==id);S.classes.push({...c,id:uid()});save();r()};
+// ---- timetable photo scan (Claude vision via the sample capability) ----
+let scanRows=[],scanMsg='',scanBusy=false,scanPrev='',scanBlob=null,hasVis=false;
+(async()=>{try{const s=window.claude&&await claude.use('sample');hasVis=!!(s&&(await s.limits()).images)}catch(e){}r()})();
+async function pick(i){const f=i.files[0];if(!f)return;if(!/^image\/(jpeg|png|webp)$/.test(f.type)||f.size>15e6){scanMsg='Use a JPG, PNG or WebP photo under 15 MB.';return r()}
+try{const bm=await createImageBitmap(f),k=Math.min(1,1800/Math.max(bm.width,bm.height)),c=document.createElement('canvas');c.width=Math.round(bm.width*k);c.height=Math.round(bm.height*k);c.getContext('2d').drawImage(bm,0,0,c.width,c.height);scanBlob=await new Promise(ok=>c.toBlob(ok,'image/jpeg',.85));if(scanPrev)URL.revokeObjectURL(scanPrev);scanPrev=URL.createObjectURL(scanBlob);scanRows=[];scanMsg='Photo ready. Tap "Read timetable".'}catch(e){scanMsg='Could not read that image.'}r()}
+async function scan(){if(!scanBlob||scanBusy)return;if(!hasVis)return ocrScan();scanBusy=true;scanMsg='Reading timetable… this can take up to a minute.';r();
+try{const s=await claude.use('sample');if(!s)throw{code:'na'};
+const rows=await s.json('Read the university timetable in the attached photo. Return ONLY a JSON array. Each item: {"code":string,"name":string,"day":number 0-6 (0=Sunday),"start":"HH:MM" 24-hour,"end":"HH:MM" 24-hour,"venue":string,"lecturer":string,"uncertain":boolean}. Use "" for anything not visible. Never invent values; set uncertain true when any field was hard to read. One item per class slot.',{images:[scanBlob],modelTier:'default',cache:false});
+if(!Array.isArray(rows))throw{code:'bad'};const T=/^\d\d:\d\d$/;
+scanRows=rows.map(x=>({code:String(x.code||'').slice(0,20),name:String(x.name||'').slice(0,80),day:Math.min(6,Math.max(0,+x.day||0)),start:T.test(x.start)?x.start:'',end:T.test(x.end)?x.end:'',venue:String(x.venue||'').slice(0,60),lec:String(x.lecturer||'').slice(0,60),unc:!!x.uncertain,keep:true}));
+scanMsg=scanRows.length?'Check every row, fix mistakes, then add.':'No classes found. Try a sharper, straight-on photo.'}
+catch(e){scanMsg=e.code=='not_granted'?'Permission declined — allow Claude to read the photo to use scanning.':e.code=='rate_limited'?'Too many requests — wait a moment.':'Scan failed. You can still add classes manually.'}
+scanBusy=false;r()}
+// ---- standalone OCR (Tesseract.js, runs in the browser, no Claude needed) ----
+const DAYS={mon:1,tue:2,wed:3,thu:4,fri:5,sat:6,sun:0};
+function t24(h,m,ap){h=+h;if(ap){ap=ap.toLowerCase();if(ap=='pm'&&h<12)h+=12;if(ap=='am'&&h==12)h=0}return h>23||+m>59?'':hm(h*60+ +m)}
+function parseTT(txt){const rows=[];let cur=null;
+for(const raw of txt.split(/\r?\n/)){const l=raw.replace(/[|_\[\]{}]/g,' ').replace(/\s+/g,' ').trim();if(l.length<3)continue;
+const dm=l.match(/\b(mon|tue|wed|thu|fri|sat|sun)[a-z]*\b/i);if(dm)cur=DAYS[dm[1].toLowerCase()];
+const tr=l.match(/(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)?\s*(?:-|–|—|to)\s*(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)?/i);if(!tr||(tr[2]===undefined&&!tr[3]&&!tr[6]))continue;
+let[full,h1,m1,a1,h2,m2,a2]=tr;a1=a1||a2;a2=a2||a1;if(!a1&&+h1<7){a1=a2='pm'}
+const s=t24(h1,m1||'00',a1),e=t24(h2,m2||'00',a2);let rest=l.replace(full,' ');if(dm)rest=rest.replace(dm[0],' ');
+let code='',lec='',venue='';let x=rest.match(/\b([A-Z]{2,5})\s?-?(\d{3,4}[A-Z]?)\b/);if(x){code=x[1]+' '+x[2];rest=rest.replace(x[0],' ')}
+x=rest.match(/\b(?:Dr|Prof|Mr|Mrs|Ms)\.?\s+[A-Z][a-z]+(?:\s[A-Z][a-z]+)?/);if(x){lec=x[0];rest=rest.replace(x[0],' ')}
+x=rest.match(/\b(?:room|rm|hall|lab|lt|venue)\b[.: ]*[A-Za-z0-9-]+/i);if(x){venue=x[0];rest=rest.replace(x[0],' ')}
+const name=rest.replace(/[^A-Za-z0-9&' ]+/g,' ').replace(/\s+/g,' ').trim().slice(0,60);
+rows.push({code,name,day:cur??1,start:s,end:e,venue,lec,unc:!code||cur==null||!s||!e||(s&&e&&tm(e)<=tm(s)),keep:true})}return rows}
+let ocrLoad=null;
+const loadOcr=()=>window.Tesseract?Promise.resolve():ocrLoad||(ocrLoad=new Promise((ok,no)=>{const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';s.onload=ok;s.onerror=()=>{ocrLoad=null;no(new Error('load'))};document.head.appendChild(s)}));
+async function ocrScan(){if(!scanBlob||scanBusy)return;scanBusy=true;scanMsg='Loading text reader (first use downloads about 10 MB)…';r();
+try{await loadOcr();const res=await Tesseract.recognize(scanBlob,'eng',{logger:m=>{if(m.status=='recognizing text'){scanMsg='Reading… '+Math.round(m.progress*100)+'%';const e=document.querySelector('.scm');if(e)e.textContent=scanMsg}}});
+scanRows=parseTT(res.data.text);scanMsg=scanRows.length?'Check every row — OCR makes mistakes. Fix them, then add.':'No classes recognised. Use a clear, straight, well-lit photo, or add classes manually.'}
+catch(e){scanMsg='The text reader could not load or run here (it needs internet and a normal website, not the claude.ai preview). Add classes manually.'}
+scanBusy=false;r()}
+const okRow=x=>x.code&&x.start&&x.end&&tm(x.end)>tm(x.start);
+function addScan(){let n=0,sk=0;scanRows.filter(x=>x.keep).forEach(x=>{if(!okRow(x)){sk++;return}S.classes.push({id:uid(),code:x.code,name:x.name,day:x.day,start:x.start,end:x.end,venue:x.venue,lec:x.lec,lead:S.set.lead,sound:'',on:true});n++});
+scanRows=scanRows.filter(x=>!x.keep||!okRow(x));if(n&&!S.set.subj)S.set.subj=[...new Set(S.classes.map(c=>c.name||c.code))].join(', ');
+scanMsg=n+' classes added'+(sk?', '+sk+' skipped (missing code or invalid times — fix and add again)':'')+'.'+(n?' Now open Planner → Generate smart schedule.':'');save();r()}
+function scanCard(){
+return`<div class="c"><h2>📷 Scan timetable photo</h2><input type="file" accept="image/jpeg,image/png,image/webp" onchange="pick(this)" aria-label="Timetable photo"><p class="mu">${hasVis?'The photo is sent to Claude to read it.':'The photo is read on your device with OCR and is not uploaded.'} Nothing is saved until you confirm. Images only (no PDF yet). Works best on list-style timetables (day, time, course code per line); grid layouts need more fixing.</p>${scanPrev?`<img src="${scanPrev}" alt="Timetable preview" style="max-width:100%;max-height:220px;border-radius:10px"><br><br><button class="p" onclick="scan()" ${scanBusy?'disabled':''}>${scanBusy?'Reading…':'Read timetable'}</button>`:''}<p class="mu scm" role="status">${esc(scanMsg)}</p>
+${scanRows.map((x,i)=>`<div class="row" style="flex-wrap:wrap"><input type="checkbox" ${x.keep?'checked':''} onchange="scanRows[${i}].keep=this.checked" aria-label="Keep row"><input size="7" value="${esc(x.code)}" oninput="scanRows[${i}].code=this.value" placeholder="Code"><input size="14" value="${esc(x.name)}" oninput="scanRows[${i}].name=this.value" placeholder="Name"><select onchange="scanRows[${i}].day=+this.value">${D.map((d,j)=>`<option value="${j}" ${j==x.day?'selected':''}>${d}</option>`).join('')}</select><input type="time" value="${x.start}" oninput="scanRows[${i}].start=this.value"><input type="time" value="${x.end}" oninput="scanRows[${i}].end=this.value"><input size="8" value="${esc(x.venue)}" oninput="scanRows[${i}].venue=this.value" placeholder="Venue">${x.unc?'<span class="tag">check</span>':''}${!okRow(x)?'<span class="tag">fix times</span>':clash({id:'',day:x.day,start:x.start,end:x.end})?'<span class="tag">overlaps</span>':''}</div>`).join('')}
+${scanRows.length?'<br><button class="y" onclick="addScan()">Add selected to timetable</button>':''}</div>`}
+// ---- study planner (deterministic) ----
+function gen(){const P=S.set,subs=P.subj.split(',').map(x=>x.trim()).filter(Boolean);if(!subs.length)return alert('Enter subjects first (Settings). Add * after a hard subject, e.g. Calculus*');
+const rot=[];subs.forEach(s=>{const nm=s.replace(/\*$/,'');rot.push(nm);if(s.endsWith('*'))rot.push(nm)});
+S.study=S.study.filter(x=>x.status=='accepted');let k=0;const n=new Date(),nm=n.getHours()*60+n.getMinutes(),sess=+P.sess,brk=+P.brk;
+for(let i=0;i<7;i++){const d=new Date(n.getFullYear(),n.getMonth(),n.getDate()+i),ds=ymd(d);
+const busy=S.classes.filter(c=>c.day==d.getDay()).map(c=>[tm(c.start)-15,tm(c.end)+15]).concat(S.study.filter(s=>s.date==ds).map(s=>[tm(s.start),tm(s.end)]));
+let cnt=0;for(let m=tm(P.sleepE);m+sess<=tm(P.sleepS)&&cnt<+P.perDay;m+=15){if(i==0&&m<nm+15)continue;if(busy.some(b=>m<b[1]&&m+sess>b[0]))continue;
+S.study.push({id:uid(),subject:rot[k++%rot.length],date:ds,start:hm(m),end:hm(m+sess),status:'suggested'});busy.push([m,m+sess+brk+45]);cnt++}}
+tab='plan';save();r()}
+const acc=id=>{S.study.find(s=>s.id==id).status='accepted';save();r()},disc=id=>{S.study=S.study.filter(s=>s.id!=id);save();r()};
+const TIPS=['Start with the hardest subject while your mind is fresh.','Test yourself instead of rereading — recall beats review.','Space revision over several days; it sticks better than one long night.','Sleep is part of studying. Protect it.','Write down the next small step before you stop for the day.','Phone in another room for one focused session.','Progress beats perfection: one honest session today counts.','Explain a topic out loud as if teaching a friend.'];
+// ---- views ----
+const fld=(i,l,t='text',v='',x='')=>`<div><label for="${i}">${l}</label><input id="${i}" type="${t}" value="${esc(v)}" ${x}></div>`;
+const sopt=sel=>'<option value="">Default / built-in</option>'+sounds.map(s=>`<option value="${s.id}" ${s.id==sel?'selected':''}>${esc(s.name)}</option>`).join('');
+function view(){const now=new Date(),ds=ymd(now),n=nextC();
+if(tab=='today'){const cl=S.classes.filter(c=>c.day==now.getDay()).sort((a,b)=>tm(a.start)-tm(b.start)),st=S.study.filter(s=>s.date==ds&&s.status=='accepted');
+return`<h1>${now.getHours()<12?'Good morning':now.getHours()<18?'Good afternoon':'Good evening'} 👋</h1><div class="mu">${now.toDateString()}</div><br>
+<div class="c"><div class="mu">Next class</div>${n?`<div class="big" id="cd"></div><div>${esc(n.t)} · ${new Date(n.st).toLocaleString([],{weekday:'short',hour:'2-digit',minute:'2-digit'})}</div>`:'<div>No upcoming classes. Add one in Timetable.</div>'}<br><button class="p" onclick="arm()">Enable alarms</button> <button class="y" onclick="testAlarm()">Test alarm</button>
+<p class="mu">Alarms ring only while this page is open (a background tab or an unlocked phone is fine). Closed browser = no alarm.${'Notification'in window?' Notifications: '+Notification.permission:''}</p></div>
+<div class="c"><h2>Today's classes</h2>${cl.map(c=>`<div class="row"><span><b>${esc(c.code)}</b> ${esc(c.name)}<br><span class="mu">${c.start}–${c.end} · ${esc(c.venue)}</span></span></div>`).join('')||'<div class="mu">None today.</div>'}</div>
+<div class="c"><h2>Today's study sessions</h2>${st.map(s=>`<div class="row"><span>${esc(s.subject)}</span><span class="mu">${s.start}–${s.end}</span></div>`).join('')||'<div class="mu">None accepted. Try the Planner.</div>'}</div>
+<div class="c"><h2>Tip of the day</h2>${TIPS[Math.floor(+now/864e5)%TIPS.length]}</div>`}
+if(tab=='time'){const e=editing&&S.classes.find(c=>c.id==editing)||{day:1,start:'08:00',end:'10:00',lead:S.set.lead};
+return`<h1>Timetable</h1>${scanCard()}<div class="c"><h2>${editing?'Edit':'Add'} class</h2><div class="g">${fld('fc','Course code','text',e.code)}${fld('fn','Course name','text',e.name)}<div><label for="fd">Day</label><select id="fd">${D.map((d,i)=>`<option value="${i}" ${i==e.day?'selected':''}>${d}</option>`).join('')}</select></div>${fld('fs','Start','time',e.start)}${fld('fe','End','time',e.end)}${fld('fv','Venue','text',e.venue)}${fld('fl','Lecturer','text',e.lec)}${fld('fr','Remind (min before)','number',e.lead,'min=0')}<div><label for="fx">Alarm sound</label><select id="fx">${sopt(e.sound)}</select></div></div><br><button class="p" onclick="saveClass()">Save class</button> ${editing?'<button onclick="editing=null;r()">Cancel</button>':''}</div>
+<div class="c">${[1,2,3,4,5,6,0].map(d=>{const l=S.classes.filter(c=>c.day==d).sort((a,b)=>tm(a.start)-tm(b.start));return l.length?`<h2>${D[d]}</h2>`+l.map(c=>`<div class="row"><span><b>${esc(c.code)}</b> ${esc(c.name)}<br><span class="mu">${c.start}–${c.end} · ${esc(c.venue)} · ${c.lead}m alarm</span></span><span><button onclick="editing='${c.id}';r();scrollTo(0,0)">Edit</button> <button onclick="dupC('${c.id}')">Copy</button> <button class="d" onclick="delC('${c.id}')">✕</button></span></div>`).join(''):''}).join('')||'<div class="mu">No classes yet.</div>'}</div>`}
+if(tab=='plan'){const l=S.study.slice().sort((a,b)=>(a.date+a.start).localeCompare(b.date+b.start)),hrs={};l.forEach(s=>hrs[s.subject]=(hrs[s.subject]||0)+(tm(s.end)-tm(s.start))/60);
+return`<h1>Study planner</h1>${scanCard()}<div class="c"><p class="mu">Finds free gaps around your classes (15 min buffer), skips sleep hours, rotates subjects (hard ones twice) and leaves breathing room. Set subjects in Settings.</p><button class="p" onclick="gen()">Generate smart schedule</button></div>
+${S.study.length?`<div class="c"><h2>🔔 Alarm for this schedule</h2><label for="ss2">Sound for all study sessions</label><select id="ss2" onchange="S.set.studySound=this.value;S.study.forEach(s=>s.sound='');save();r()">${sopt(S.set.studySound)}</select><br><br><button onclick="testAlarm(S.set.studySound||S.set.defSound)">Test this sound</button><p class="mu">Alarms ring only for accepted sessions, ${S.set.lead} min before they start (change in Settings). Pick a different sound per session in the list below.</p>${soundUp()}</div>`:''}
+<div class="c"><h2>Hours per subject</h2>${Object.entries(hrs).map(([k,v])=>`<div class="row"><span>${esc(k)}</span><span>${v.toFixed(1)} h</span></div>`).join('')||'<div class="mu">Nothing scheduled.</div>'}</div>
+<div class="c">${l.map(s=>`<div class="row"><span>${s.date} ${s.start}–${s.end} · ${esc(s.subject)} <span class="tag">${s.status=='accepted'?'accepted':'suggestion'}</span></span><span><select style="max-width:130px" onchange="S.study.find(x=>x.id=='${s.id}').sound=this.value;save()" aria-label="Alarm sound">${sopt(s.sound||S.set.studySound||'')}</select> ${s.status!='accepted'?`<button class="p" onclick="acc('${s.id}')">Accept</button> `:''}<button class="d" onclick="disc('${s.id}')">✕</button></span></div>`).join('')||'<div class="mu">No sessions.</div>'}</div>`}
+if(tab=='alarm')return`<h1>Alarm sounds</h1><div class="c">${soundUp()}</div>
+<div class="c">${sounds.map(s=>`<div class="row"><span>${esc(s.name)} ${s.id==S.set.defSound?'<span class="tag">default</span>':''}</span><span><button onclick="testAlarm('${s.id}')">Test</button> <button onclick="S.set.defSound='${s.id}';save();r()">Default</button> <button class="d" onclick="delS('${s.id}')">✕</button></span></div>`).join('')||'<div class="mu">No custom sounds — built-in tone is used.</div>'}</div>`;
+return`<h1>Settings</h1><div class="c"><div class="g">${fld('sl','Default reminder (min)','number',S.set.lead)}${fld('sn','Snooze (min)','number',S.set.snooze)}${fld('ss','Sleep starts','time',S.set.sleepS)}${fld('se','Sleep ends','time',S.set.sleepE)}${fld('sz','Session (min)','number',S.set.sess)}${fld('sb','Break (min)','number',S.set.brk)}${fld('sp','Max sessions/day','number',S.set.perDay)}</div><br>${fld('sj','Subjects (comma-separated, * = hard)','text',S.set.subj)}<br><button class="p" onclick="setS()">Save settings</button> <button onclick="S.set.theme=S.set.theme=='dark'?'light':'dark';setT();save();r()">Toggle dark/light</button></div>`}
+function setS(){const g=i=>$('#'+i).value;Object.assign(S.set,{lead:+g('sl')||10,snooze:+g('sn')||5,sleepS:g('ss'),sleepE:g('se'),sess:+g('sz')||50,brk:+g('sb')||10,perDay:+g('sp')||3,subj:g('sj')});save();alert('Saved')}
+let upMsg='';
+function wav(buf,secs){const n=Math.min(buf.length,Math.floor(buf.sampleRate*secs)),ch=buf.numberOfChannels,d=new Float32Array(n);for(let c=0;c<ch;c++){const x=buf.getChannelData(c);for(let i=0;i<n;i++)d[i]+=x[i]/ch}
+const o=new DataView(new ArrayBuffer(44+n*2)),w=(p,s)=>[...s].forEach((c,i)=>o.setUint8(p+i,c.charCodeAt(0)));
+w(0,'RIFF');o.setUint32(4,36+n*2,true);w(8,'WAVEfmt ');o.setUint32(16,16,true);o.setUint16(20,1,true);o.setUint16(22,1,true);o.setUint32(24,buf.sampleRate,true);o.setUint32(28,buf.sampleRate*2,true);o.setUint16(32,2,true);o.setUint16(34,16,true);w(36,'data');o.setUint32(40,n*2,true);
+for(let i=0;i<n;i++)o.setInt16(44+i*2,Math.max(-1,Math.min(1,d[i]))*32767,true);return new Blob([o],{type:'audio/wav'})}
+async function upl(i){const f=i.files[0];i.value='';if(!f)return;const vid=f.type.startsWith('video/');
+if(!(vid||f.type.startsWith('audio/')))return alert('Choose an audio or video file.');if(f.size>(vid?80e6:8e6))return alert(vid?'Video must be under 80 MB.':'Audio must be under 8 MB.');
+let blob=f;if(vid){upMsg='Extracting audio…';r();try{unlock();const b=await ctx.decodeAudioData(await f.arrayBuffer());blob=wav(b,45)}catch(e){upMsg='This browser could not read audio from that video (codec support varies). Upload an audio file instead.';return r()}}
+const nm=prompt('Name this sound',f.name.replace(/\.[^.]+$/,''));upMsg='';if(nm===null)return r();await snd('put',{id:uid(),name:nm||f.name,blob});loadSounds()}
+const soundUp=()=>`<label>Upload audio (MP3, WAV, M4A, AAC, OGG) or a video (MP4/MOV) to extract its sound<input type="file" accept="audio/*,video/*" onchange="upl(this)"></label><p class="mu" role="status">${esc(upMsg)||'Video: the first 45 s of audio is extracted; codec support varies by browser. Audio max 8 MB, video max 80 MB.'}</p>`;
+async function delS(id){await snd('del',id);if(S.set.defSound==id)S.set.defSound='';S.classes.forEach(c=>{if(c.sound==id)c.sound=''});S.study.forEach(s=>{if(s.sound==id)s.sound=''});if(S.set.studySound==id)S.set.studySound='';save();loadSounds()}
+const setT=()=>{if(S.set.theme)document.documentElement.dataset.theme=S.set.theme};
+function r(){if(['INPUT','SELECT'].includes(document.activeElement.tagName)&&document.activeElement.type!='file'&&false)return;$('#app').innerHTML=view();$('#nav').innerHTML=[['today','🏠','Today'],['time','📅','Timetable'],['plan','🧠','Planner'],['alarm','🔔','Alarms'],['set','⚙️','Settings']].map(t=>`<button class="${tab==t[0]?'on':''}" onclick="tab='${t[0]}';r()">${t[1]}<br>${t[2]}</button>`).join('')}
+setT();r();loadSounds();tick();
+</script></body></html>
